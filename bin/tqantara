@@ -1,0 +1,391 @@
+#!/usr/bin/env bash
+
+set -e
+
+USE_TAB=false
+USE_FLOATING=false
+USE_PANE=false
+NAME=""
+PROGRAM=""
+POS=""
+FINAL_RETURN=true
+
+show_help() {
+    cat <<'EOF'
+tqantara (Tmux REPL Bridge)
+Named after the Arabic "qantara" meaning bridge - like how bridges connect distant places,
+this script bridges the gap between your Helix editor and REPL environments in Tmux.
+
+This script provides REPL interaction between Helix editor and Tmux by routing
+selected content to windows, popups, or panes.
+
+It accepts content from stdin and sends it to designated Tmux windows or panes
+using bracketed paste mode.
+
+Requirements:
+    - Tmux must be running with the session active
+    - Target REPL programs should support bracketed paste mode
+    - Tmux 3.2+ is required for popup (floating) mode
+
+The script supports three main modes:
+1. Tab mode: Routes content to named windows, creating them if they don't exist
+2. Floating mode: Routes content to popups (when creating) or current pane
+3. Pane mode: Routes content to panes in specified positions, creating them if needed
+
+Usage:
+    # Send to existing window or create new one:
+    echo 'print(42)' | ./tqantara --tab --name python --program 'ipython --simple-prompt'
+
+    # Send to current pane:
+    echo 'ls -la' | ./tqantara --floating --pos current
+
+    # Send to pane below current:
+    echo 'ls -la' | ./tqantara --floating --pos down
+
+    # Create new popup:
+    ./tqantara --floating --program 'python3'
+
+    # Send to pane in the upper left position:
+    echo 'print(42)' | ./tqantara --pane --pos "up left"
+
+    # Create new pane with program (right direction):
+    ./tqantara --pane --pos right --program 'python3'
+
+    # Create new pane (stacked uses a vertical split in tmux):
+    ./tqantara --pane --pos stacked --program 'python3'
+
+Options:
+    --tab                       Use tab mode (tmux windows).
+    --floating                  Use floating mode (tmux popup or current pane).
+    --pane                      Use pane mode.
+    --name <name>               Window name (required for --tab mode).
+    --pos <position>            Position specification:
+                                For --pane mode:
+                                - With --program: 'right', 'down', or 'stacked'
+                                - Without --program: space-separated directions like 'up left' or 'down right right'
+                                For --floating mode (without --program):
+                                - 'current': use current pane
+                                - 'up'/'down': switch focus up/down, supports repetition like 'down down'
+    --program <command>         Program to launch (e.g., 'ipython --simple-prompt').
+    --final-return <val>        Control the final return behavior after sending bracketed paste:
+                                - true (default): send final return immediately
+                                - false: don't send final return
+                                - number: send final return after delay (in seconds, e.g., 0.1)
+                                NOTE: You generally do not need to think about this option.
+                                Only change this value if you encounter issues:
+                                - Code cannot be executed by REPL (requires manual return): try 0.1
+                                - REPL shows two prompts instead of one: try false
+                                Examples: Claude Code (use 0.1), radian (use false)
+    --help                      Show this help message and exit.
+
+Note: --tab, --floating, and --pane are mutually exclusive.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+    --tab)
+        USE_TAB=true
+        shift
+        ;;
+    --floating)
+        USE_FLOATING=true
+        shift
+        ;;
+    --pane)
+        USE_PANE=true
+        shift
+        ;;
+    --name)
+        NAME="$2"
+        shift 2
+        ;;
+    --program)
+        PROGRAM="$2"
+        shift 2
+        ;;
+    --pos)
+        POS="$2"
+        shift 2
+        ;;
+    --final-return)
+        FINAL_RETURN="$2"
+        shift 2
+        ;;
+    --help)
+        show_help
+        exit 0
+        ;;
+    *)
+        echo "Unknown option: $1" >&2
+        exit 1
+        ;;
+    esac
+done
+
+validate_args() {
+    # Count active modes
+    local mode_count=0
+
+    if [[ "$USE_TAB" == true ]]; then
+        mode_count=$((mode_count + 1))
+    elif [[ "$USE_FLOATING" == true ]]; then
+        mode_count=$((mode_count + 1))
+    elif [[ "$USE_PANE" == true ]]; then
+        mode_count=$((mode_count + 1))
+    fi
+
+    # Check that only one mode is used
+    if [[ $mode_count -gt 1 ]]; then
+        echo "Error: --tab, --floating, and --pane are mutually exclusive" >&2
+        exit 1
+    fi
+
+    # Check that at least one mode is specified
+    if [[ $mode_count -eq 0 ]]; then
+        echo "Error: One of --tab, --floating, or --pane must be specified" >&2
+        exit 1
+    fi
+
+    # Validate tab mode requirements
+    if [[ "$USE_TAB" == true && -z "$NAME" ]]; then
+        echo "Error: --name is required when using --tab" >&2
+        exit 1
+    fi
+
+    # Validate that --name is only used with --tab
+    if [[ ("$USE_FLOATING" == true || "$USE_PANE" == true) && -n "$NAME" ]]; then
+        echo "Error: --name can only be used with --tab" >&2
+        exit 1
+    fi
+
+    # Validate floating mode requirements
+    if [[ "$USE_FLOATING" == true ]]; then
+        if [[ -z "$PROGRAM" && -z "$POS" ]]; then
+            echo "Error: For floating windows, either --program or --pos is required" >&2
+            exit 1
+        fi
+
+        # When creating new popup with --program, --pos must not be specified
+        if [[ -n "$PROGRAM" && -n "$POS" ]]; then
+            echo "Error: When creating new popup with --program, --pos must not be specified" >&2
+            exit 1
+        fi
+
+        # When using --pos without --program, validate position values for floating mode
+        if [[ -z "$PROGRAM" && -n "$POS" ]]; then
+            # Check that POS only contains valid directions for floating mode
+            local invalid_word=""
+            for word in $POS; do
+                case "$word" in
+                up | down | current) ;; # Valid directions for floating mode
+                left | right)
+                    echo "Error: --pos does not support 'left' and 'right' directions in --floating mode" >&2
+                    exit 1
+                    ;;
+                *)
+                    invalid_word="$word"
+                    break
+                    ;;
+                esac
+            done
+
+            if [[ -n "$invalid_word" ]]; then
+                echo "Error: Invalid direction '$invalid_word' in --pos '$POS' for floating mode. Valid directions: up, down, current" >&2
+                exit 1
+            fi
+        fi
+    fi
+
+    # Validate pane mode requirements
+    if [[ "$USE_PANE" == true ]]; then
+        if [[ -z "$POS" ]]; then
+            echo "Error: --pos is required when using --pane" >&2
+            exit 1
+        fi
+
+        # When creating new pane with --program, validate position values
+        if [[ -n "$PROGRAM" ]]; then
+            case "$POS" in
+            right | down | stacked) ;; # Valid for new pane creation
+            *)
+                echo "Error: When creating new pane with --program, --pos can only be 'right', 'down', or 'stacked'" >&2
+                exit 1
+                ;;
+            esac
+        else
+            # When switching focus to existing pane, validate that POS contains only valid direction words
+            local invalid_word=""
+            for word in $POS; do
+                case "$word" in
+                left | right | up | down) ;; # Valid direction words
+                *)
+                    invalid_word="$word"
+                    break
+                    ;;
+                esac
+            done
+
+            if [[ -n "$invalid_word" ]]; then
+                echo "Error: Invalid direction '$invalid_word' in --pos '$POS'. Valid directions: left, right, up, down" >&2
+                exit 1
+            fi
+        fi
+    fi
+
+    # Validate that --pos is only used with --pane or --floating
+    if [[ "$USE_TAB" == true && -n "$POS" ]]; then
+        echo "Error: --pos can only be used with --pane or --floating" >&2
+        exit 1
+    fi
+
+    # Validate --final-return value
+    if [[ "$FINAL_RETURN" != "true" && "$FINAL_RETURN" != "false" ]]; then
+        # Check if it's a valid positive number (integer or decimal)
+        if ! [[ "$FINAL_RETURN" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+            echo "Error: --final-return must be 'true', 'false', or a positive number" >&2
+            exit 1
+        fi
+    fi
+}
+
+send_bracketed_paste() {
+    local content="$1"
+
+    tmux send-keys -l $'\e[200~'
+    tmux send-keys -l -- "$content"
+    tmux send-keys -l $'\r\e[201~'
+
+    # Handle final return based on FINAL_RETURN
+    if [[ "$FINAL_RETURN" == "false" ]]; then
+        # Don't send final return
+        :
+    elif [[ "$FINAL_RETURN" == "true" ]]; then
+        # Send final return immediately
+        tmux send-keys C-m
+    else
+        # Send final return with delay
+        sleep "$FINAL_RETURN"
+        tmux send-keys C-m
+    fi
+}
+
+handle_tab_mode() {
+    local existing_windows
+    existing_windows=$(tmux list-windows -F '#W')
+
+    if echo "$existing_windows" | grep -Fxq "$NAME"; then
+        tmux select-window -t "$NAME"
+
+        if [[ -t 0 ]]; then
+            return 0
+        fi
+
+        local stdin_content
+        stdin_content=$(cat)
+        if [[ -n "$stdin_content" ]]; then
+            send_bracketed_paste "$stdin_content"
+        fi
+    else
+        if [[ -n "$PROGRAM" ]]; then
+            tmux new-window -n "$NAME" -c "$(pwd)" "$PROGRAM"
+        else
+            echo "Error: Window '$NAME' does not exist and no --program specified" >&2
+            exit 1
+        fi
+    fi
+}
+
+handle_floating_mode() {
+    if [[ -n "$PROGRAM" ]]; then
+        tmux display-popup -E -d "$(pwd)" "$PROGRAM"
+        return 0
+    fi
+
+    if [[ -n "$POS" ]]; then
+        # Handle focus switching based on --pos directions
+        for direction in $POS; do
+            case "$direction" in
+            current)
+                # Do nothing - stay at current position
+                ;;
+            up)
+                tmux select-pane -U
+                ;;
+            down)
+                tmux select-pane -D
+                ;;
+            esac
+        done
+
+        if [[ ! -t 0 ]]; then
+            local stdin_content
+            stdin_content=$(cat)
+            if [[ -n "$stdin_content" ]]; then
+                send_bracketed_paste "$stdin_content"
+            fi
+        fi
+    fi
+}
+
+handle_pane_mode() {
+    if [[ -n "$PROGRAM" ]]; then
+        # Create new pane with program
+        case "$POS" in
+        right)
+            tmux split-window -h -c "$(pwd)" "$PROGRAM"
+            ;;
+        down)
+            tmux split-window -v -c "$(pwd)" "$PROGRAM"
+            ;;
+        stacked)
+            tmux split-window -v -c "$(pwd)" "$PROGRAM"
+            ;;
+        esac
+        return 0
+    fi
+
+    # Switch to existing pane and send code
+    # Move focus according to the specified directions
+    for direction in $POS; do
+        case "$direction" in
+        left)
+            tmux select-pane -L
+            ;;
+        right)
+            tmux select-pane -R
+            ;;
+        up)
+            tmux select-pane -U
+            ;;
+        down)
+            tmux select-pane -D
+            ;;
+        esac
+    done
+
+    # Send stdin content if available
+    if [[ ! -t 0 ]]; then
+        local stdin_content
+        stdin_content=$(cat)
+        if [[ -n "$stdin_content" ]]; then
+            send_bracketed_paste "$stdin_content"
+        fi
+    fi
+}
+
+validate_args
+
+# Check if tmux is running and we're inside a session
+if [[ -z "$TMUX" ]]; then
+    echo "Error: Not running inside a tmux session. Please start tmux first." >&2
+    exit 1
+fi
+
+if [[ "$USE_TAB" == true ]]; then
+    handle_tab_mode
+elif [[ "$USE_FLOATING" == true ]]; then
+    handle_floating_mode
+elif [[ "$USE_PANE" == true ]]; then
+    handle_pane_mode
+fi

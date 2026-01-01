@@ -1,16 +1,20 @@
-# Helix + Zellij + AI + REPL Workflow
+# Helix + Zellij/Tmux + AI + REPL Workflow
 
 This repository provides a complete workflow integration for modern development
-using Helix editor, Zellij terminal multiplexer, AI CLI apps, and REPL
-environments. The workflow is built around three scripts with minimal
+using Helix editor, Zellij or Tmux terminal multiplexers, AI CLI apps, and REPL
+environments. The workflow is built around a small set of scripts with minimal
 dependencies:
 
 ## Overview
 
 - **`haico`** - AI-powered code completion for Helix editor supporting OpenAI,
   Gemini, Codestral and Claude providers
-- **`zqantara`** - REPL bridge between Helix and Zellij with bracketed paste
-  mode support for all Zellij window types
+- **`qantara`** - Smart REPL bridge router that detects Zellij or Tmux and forwards
+  commands to `zqantara` or `tqantara` (use this in Helix configs)
+- **`zqantara`** - Zellij REPL backend with bracketed paste support for all Zellij
+  window types
+- **`tqantara`** - Tmux REPL backend with bracketed paste support for windows,
+  panes, and popups
 - **`symbol-search`** - Workspace-wide symbol (word) completion using command line tools
 
 This workflow enables seamless integration between:
@@ -18,21 +22,23 @@ This workflow enables seamless integration between:
 - Code editing in Helix with AI-powered completions
 - REPL interaction for Python, R, Shell, and other languages
 - AI CLI applications like Aider and Claude Code
-- Multiplexing: Manage multiple REPLs and processes efficiently using Zellij's tabs, panes, and floating windows.
+- Multiplexing: Manage multiple REPLs and processes efficiently using Zellij's
+  tabs/panes/floating windows or Tmux windows/panes/popups.
 
 All scripts are designed with minimal dependencies and focus on providing
 efficient, keyboard-driven workflows.
 
-> **💡 Tip**: Use `haico --help`, `zqantara --help`, and `symbol-search --help` to view the complete
-> documentation of all supported command-line arguments and options.
+> **💡 Tip**: Use `haico --help`, `qantara --help`, and `symbol-search --help` to view the complete
+> documentation of all supported command-line arguments and options. Use
+> `zqantara --help` or `tqantara --help` for backend-specific details.
 
 ## Installation
 
 1. Clone this repository
-2. Copy the scripts from the `bin/` folder (`haico`, `zqantara`, `symbol-search`, and `picker`) to your PATH
+2. Copy the scripts from the `bin/` folder (`haico`, `qantara`, `zqantara`, `tqantara`, `symbol-search`, and `picker`) to your PATH
 3. Set up the required API keys for `haico`
 4. Configure Helix with the provided key bindings
-5. Ensure Zellij is installed and running
+5. Ensure Zellij or Tmux is installed and running
 
 ## Video Showcase
 
@@ -139,11 +145,24 @@ A-y = [
 **Note**: Claude models do not support newline/whitespace as stop sequences, so
 single-line completion is not available with Claude.
 
+## qantara - Smart Multiplexer Router
+
+`qantara` detects your current multiplexer context and forwards all arguments
+to the correct backend:
+
+- If `$ZELLIJ` is set, it runs `zqantara`
+- If `$TMUX` is set, it runs `tqantara`
+
+This means you can keep one set of Helix key bindings that work in both Zellij
+and Tmux. Use `qantara` in your Helix config unless you want to target a
+specific backend directly.
+
 ## zqantara - Zellij REPL Bridge
 
 Named after the Arabic "qantara" meaning bridge, `zqantara` bridges the gap
 between your Helix editor and REPL environments in Zellij, enabling seamless
-code execution and AI CLI tool integration.
+code execution and AI CLI tool integration. It is the Zellij backend used by
+`qantara`.
 
 ### Features
 
@@ -162,31 +181,31 @@ code execution and AI CLI tool integration.
 
 - Zero external dependencies - uses only standard Unix tools
 
-### Helix Integration
+### Helix Integration (use `qantara`)
 
 #### Opening REPL Programs and AI Tools
 
 ```toml
 # Open in tabs
 [keys.normal.space.o]
-g = ":sh zqantara --tab --name lazygit --program lazygit"
-p = ":sh zqantara --tab --name ipython --program 'uv run ipython'"
-r = ":sh zqantara --tab --name radian --program radian"
-c = ":sh zqantara --tab --name aichat --program 'aichat -s'"
-C = ":sh zqantara --tab --name claude --program claude"
-a = ":sh zqantara --tab --name aider --program aider"
+g = ":sh qantara --tab --name lazygit --program lazygit"
+p = ":sh qantara --tab --name ipython --program 'uv run ipython'"
+r = ":sh qantara --tab --name radian --program radian"
+c = ":sh qantara --tab --name aichat --program 'aichat -s'"
+C = ":sh qantara --tab --name claude --program claude"
+a = ":sh qantara --tab --name aider --program aider"
 
 # Open in floating windows
 [keys.normal.space.o.f]
-p = ":sh zqantara --floating --program 'uv run ipython'"
-t = ":sh zqantara --floating --program $SHELL"
-c = ":sh zqantara --floating --program aichat"
+p = ":sh qantara --floating --program 'uv run ipython'"
+t = ":sh qantara --floating --program $SHELL"
+c = ":sh qantara --floating --program aichat"
 
 # Open in panes (embedded windows)
 [keys.normal.space.o.w]
-p = ":sh zqantara --pane --pos down --program ipython"
-t = ":sh zqantara --pane --pos right --program $SHELL"
-c = ":sh zqantara --pane --pos stacked --program aichat"
+p = ":sh qantara --pane --pos down --program ipython"
+t = ":sh qantara --pane --pos right --program $SHELL"
+c = ":sh qantara --pane --pos stacked --program aichat"
 ```
 
 #### Sending Content to REPLs and AI Tools
@@ -194,39 +213,39 @@ c = ":sh zqantara --pane --pos stacked --program aichat"
 ```toml
 [keys.normal.space.space]
 # Send to named tabs
-p = ":pipe-to zqantara --tab --name ipython"
-r = ":pipe-to zqantara --final-return false --tab --name radian"
-c = ":pipe-to zqantara --tab --name aichat"
-C = ":pipe-to zqantara --final-return 0.1 --tab --name claude"
-t = ":pipe-to zqantara --tab --name shell"
+p = ":pipe-to qantara --tab --name ipython"
+r = ":pipe-to qantara --final-return false --tab --name radian"
+c = ":pipe-to qantara --tab --name aichat"
+C = ":pipe-to qantara --final-return 0.1 --tab --name claude"
+t = ":pipe-to qantara --tab --name shell"
 
 # Send to floating windows by position
 # 'current' means use current floating window without switching position
-"1" = ":pipe-to zqantara --floating --pos current"
-"2" = ":pipe-to zqantara --floating --pos up"
-"3" = ":pipe-to zqantara --floating --pos down"
+"1" = ":pipe-to qantara --floating --pos current"
+"2" = ":pipe-to qantara --floating --pos up"
+"3" = ":pipe-to qantara --floating --pos down"
 
 # Send to panes by position
-"l" = ":pipe-to zqantara --pane --pos 'down right'"
-"h" = ":pipe-to zqantara --pane --pos 'down left'"
+"l" = ":pipe-to qantara --pane --pos 'down right'"
+"h" = ":pipe-to qantara --pane --pos 'down left'"
 
 [keys.select.space.space]
 # Send to named tabs
-p = ":pipe-to zqantara --tab --name ipython"
-r = ":pipe-to zqantara --final-return false --tab --name radian"
-c = ":pipe-to zqantara --tab --name aichat"
-C = ":pipe-to zqantara --final-return 0.1 --tab --name claude"
-t = ":pipe-to zqantara --tab --name shell"
+p = ":pipe-to qantara --tab --name ipython"
+r = ":pipe-to qantara --final-return false --tab --name radian"
+c = ":pipe-to qantara --tab --name aichat"
+C = ":pipe-to qantara --final-return 0.1 --tab --name claude"
+t = ":pipe-to qantara --tab --name shell"
 
 # Send to floating windows by position
 # 'current' means use current floating window without switching position
-"1" = ":pipe-to zqantara --floating --pos current"
-"2" = ":pipe-to zqantara --floating --pos up"
-"3" = ":pipe-to zqantara --floating --pos down"
+"1" = ":pipe-to qantara --floating --pos current"
+"2" = ":pipe-to qantara --floating --pos up"
+"3" = ":pipe-to qantara --floating --pos down"
 
 # Send to panes by position
-"l" = ":pipe-to zqantara --pane --pos 'down right'"
-"h" = ":pipe-to zqantara --pane --pos 'down left'"
+"l" = ":pipe-to qantara --pane --pos 'down right'"
+"h" = ":pipe-to qantara --pane --pos 'down left'"
 ```
 
 ### Recommended Zellij Configuration
@@ -265,6 +284,19 @@ applications support this feature, which offers several advantages:
 - Maintains proper indentation and formatting
 
 </details>
+
+## tqantara - Tmux REPL Bridge
+
+`tqantara` is the Tmux backend used by `qantara`. It supports the same CLI
+options as `zqantara`, but routes content to Tmux windows, panes, and popups
+(Tmux 3.2+ required for popups). If you want a single Helix config that works in
+both multiplexers, use `qantara`.
+
+### Features
+
+- Bracketed paste mode support for reliable REPL interaction
+- Window, pane, and popup targeting (with automatic creation when requested)
+- Zero external dependencies beyond standard Unix tools
 
 ## symbol-search - Workspace Symbol (Word) Completion
 
@@ -339,7 +371,7 @@ which cannot accurately select word boundaries (`miw` operation).
 This setup provides a comprehensive development environment:
 
 1. Code in Helix with AI-powered completions via `haico`
-2. Execute code in REPLs via `zqantara` with proper bracketed paste
-3. Access AI tools like Aider and Claude Code through organized Zellij sessions
-4. Manage multiple CLI Apps with tabs, panes, and floating windows
+2. Execute code in REPLs via `qantara` with proper bracketed paste
+3. Access AI tools like Aider and Claude Code through organized multiplexer sessions
+4. Manage multiple CLI Apps with Zellij tabs/panes/floating windows or Tmux windows/panes/popups
 5. Maintain context across all tools with minimal context switching
