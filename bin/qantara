@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+# If $ZELLIJ is not null, forward everything to zqantara, if $TMUX is not null, forward to tmux
+if [ -n "$ZELLIJ" ]; then
+    zqantara "$@"
+elif [ -n "$TMUX" ]; then
+    tqantara "$@"
+else
+    echo "Neither Zellij nor TMUX is running."
+fi
