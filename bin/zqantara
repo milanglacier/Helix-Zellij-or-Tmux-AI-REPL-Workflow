@@ -17,10 +17,10 @@ Named after the Arabic "qantara" meaning bridge - like how bridges connect dista
 this script bridges the gap between your Helix editor and REPL environments in Zellij.
 
 This script provides REPL interaction between Helix editor and Zellij by routing
-selected content to floating windows or tabs.
+selected content to tabs and panes.
 
-It accepts content from stdin and sends it to designated Zellij tabs or floating
-windows using bracketed paste mode.
+It accepts content from stdin and sends it to designated Zellij tabs or panes
+using bracketed paste mode.
 
 Requirements:
     - Zellij must be running with the session active
@@ -44,11 +44,17 @@ Usage:
     # Create new floating window:
     ./zqantara --floating --program 'python3'
 
+    # Create new floating window with a pane name:
+    ./zqantara --floating --name python --program 'python3'
+
     # Send to pane in the upper left position:
     echo 'print(42)' | ./zqantara --pane --pos "up left"
 
+    # Send to an existing named pane:
+    echo 'print(42)' | ./zqantara --pane --name python
+
     # Create new pane with program (right direction):
-    ./zqantara --pane --pos right --program 'python3'
+    ./zqantara --pane --pos right --name python --program 'python3'
 
     # Create new stacked pane:
     ./zqantara --pane --pos stacked --program 'python3'
@@ -57,14 +63,19 @@ Options:
     --tab                       Use tab mode.
     --floating                  Use floating window mode.
     --pane                      Use pane mode.
-    --name <name>               Tab name (required for --tab mode).
+    --name <name>               For --tab mode: required tab name.
+                                For --pane/--floating with --program: optional name for the new pane.
+                                For --pane/--floating without --program: target pane name
+                                (mutually exclusive with --pos).
     --pos <position>            Position specification:
                                 For --pane mode:
                                 - With --program: 'right', 'down', or 'stacked'
                                 - Without --program: space-separated directions like 'up left' or 'down right right'
+                                  (mutually exclusive with --name)
                                 For --floating mode (without --program):
                                 - 'current': use current floating window without switching focus
                                 - 'up'/'down': switch focus up/down, supports repetition like 'down down'
+                                  (mutually exclusive with --name)
     --program <command>         Program to launch (e.g., 'ipython --simple-prompt').
     --final-return <val>        Control the final return behavior after sending bracketed paste:
                                 - true (default): send final return immediately
@@ -128,9 +139,11 @@ validate_args() {
 
     if [[ "$USE_TAB" == true ]]; then
         mode_count=$((mode_count + 1))
-    elif [[ "$USE_FLOATING" == true ]]; then
+    fi
+    if [[ "$USE_FLOATING" == true ]]; then
         mode_count=$((mode_count + 1))
-    elif [[ "$USE_PANE" == true ]]; then
+    fi
+    if [[ "$USE_PANE" == true ]]; then
         mode_count=$((mode_count + 1))
     fi
 
@@ -152,22 +165,21 @@ validate_args() {
         exit 1
     fi
 
-    # Validate that --name is only used with --tab
-    if [[ ("$USE_FLOATING" == true || "$USE_PANE" == true) && -n "$NAME" ]]; then
-        echo "Error: --name can only be used with --tab" >&2
-        exit 1
-    fi
-
     # Validate floating mode requirements
     if [[ "$USE_FLOATING" == true ]]; then
-        if [[ -z "$PROGRAM" && -z "$POS" ]]; then
-            echo "Error: For floating windows, either --program or --pos is required" >&2
+        if [[ -z "$PROGRAM" && -z "$POS" && -z "$NAME" ]]; then
+            echo "Error: For floating windows, either --program, --pos, or --name is required" >&2
             exit 1
         fi
 
         # When creating new floating window with --program, --pos must not be specified
         if [[ -n "$PROGRAM" && -n "$POS" ]]; then
             echo "Error: When creating new floating window with --program, --pos must not be specified" >&2
+            exit 1
+        fi
+
+        if [[ -z "$PROGRAM" && -n "$POS" && -n "$NAME" ]]; then
+            echo "Error: When targeting an existing floating pane, --name and --pos are mutually exclusive" >&2
             exit 1
         fi
 
@@ -198,13 +210,13 @@ validate_args() {
 
     # Validate pane mode requirements
     if [[ "$USE_PANE" == true ]]; then
-        if [[ -z "$POS" ]]; then
-            echo "Error: --pos is required when using --pane" >&2
-            exit 1
-        fi
-
         # When creating new pane with --program, validate position values
         if [[ -n "$PROGRAM" ]]; then
+            if [[ -z "$POS" ]]; then
+                echo "Error: --pos is required when creating a new pane with --program" >&2
+                exit 1
+            fi
+
             case "$POS" in
             right | down | stacked) ;; # Valid for new pane creation
             *)
@@ -213,21 +225,33 @@ validate_args() {
                 ;;
             esac
         else
-            # When switching focus to existing pane, validate that POS contains only valid direction words
-            local invalid_word=""
-            for word in $POS; do
-                case "$word" in
-                left | right | up | down) ;; # Valid direction words
-                *)
-                    invalid_word="$word"
-                    break
-                    ;;
-                esac
-            done
-
-            if [[ -n "$invalid_word" ]]; then
-                echo "Error: Invalid direction '$invalid_word' in --pos '$POS'. Valid directions: left, right, up, down" >&2
+            if [[ -z "$POS" && -z "$NAME" ]]; then
+                echo "Error: When using --pane without --program, either --pos or --name is required" >&2
                 exit 1
+            fi
+
+            if [[ -n "$POS" && -n "$NAME" ]]; then
+                echo "Error: When targeting an existing pane, --name and --pos are mutually exclusive" >&2
+                exit 1
+            fi
+
+            # When switching focus to existing pane, validate that POS contains only valid direction words
+            if [[ -n "$POS" ]]; then
+                local invalid_word=""
+                for word in $POS; do
+                    case "$word" in
+                    left | right | up | down) ;; # Valid direction words
+                    *)
+                        invalid_word="$word"
+                        break
+                        ;;
+                    esac
+                done
+
+                if [[ -n "$invalid_word" ]]; then
+                    echo "Error: Invalid direction '$invalid_word' in --pos '$POS'. Valid directions: left, right, up, down" >&2
+                    exit 1
+                fi
             fi
         fi
     fi
@@ -248,12 +272,38 @@ validate_args() {
     fi
 }
 
+find_pane_id_by_name() {
+    local pane_name="$1"
+
+    zellij action list-panes | awk -v target="$pane_name" '
+        NR == 1 { next }
+        {
+            if ($2 != "terminal") {
+                next
+            }
+            title = $0
+            sub(/^[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+/, "", title)
+            if (title == target) {
+                print $1
+                exit
+            }
+        }
+    '
+}
+
 send_bracketed_paste() {
     local content="$1"
+    local pane_id="${2:-}"
 
-    zellij action write 27 91 50 48 48 126
-    zellij action write-chars "$content"
-    zellij action write 13 27 91 50 48 49 126
+    if [[ -n "$pane_id" ]]; then
+        zellij action write -p "$pane_id" 27 91 50 48 48 126
+        zellij action write-chars -p "$pane_id" "$content"
+        zellij action write -p "$pane_id" 13 27 91 50 48 49 126
+    else
+        zellij action write 27 91 50 48 48 126
+        zellij action write-chars "$content"
+        zellij action write 13 27 91 50 48 49 126
+    fi
 
     # Handle final return based on FINAL_RETURN
     if [[ "$FINAL_RETURN" == "false" ]]; then
@@ -261,11 +311,19 @@ send_bracketed_paste() {
         :
     elif [[ "$FINAL_RETURN" == "true" ]]; then
         # Send final return immediately
-        zellij action write 13
+        if [[ -n "$pane_id" ]]; then
+            zellij action write -p "$pane_id" 13
+        else
+            zellij action write 13
+        fi
     else
         # Send final return with delay
         sleep "$FINAL_RETURN"
-        zellij action write 13
+        if [[ -n "$pane_id" ]]; then
+            zellij action write -p "$pane_id" 13
+        else
+            zellij action write 13
+        fi
     fi
 }
 
@@ -273,7 +331,7 @@ handle_tab_mode() {
     local existing_tabs
     existing_tabs=$(zellij action query-tab-names)
 
-    if echo "$existing_tabs" | grep -q "^$NAME$"; then
+    if echo "$existing_tabs" | grep -Fxq -- "$NAME"; then
         zellij action go-to-tab-name "$NAME"
 
         if [[ -t 0 ]]; then
@@ -300,7 +358,31 @@ handle_tab_mode() {
 
 handle_floating_mode() {
     if [[ -n "$PROGRAM" ]]; then
-        zellij action new-pane --floating --cwd "$(pwd)" --close-on-exit -- $PROGRAM
+        if [[ -n "$NAME" ]]; then
+            zellij action new-pane --floating --name "$NAME" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
+        else
+            zellij action new-pane --floating --cwd "$(pwd)" --close-on-exit -- $PROGRAM
+        fi
+        return 0
+    fi
+
+    if [[ -n "$NAME" ]]; then
+        local target_pane_id
+        target_pane_id=$(find_pane_id_by_name "$NAME")
+
+        if [[ -z "$target_pane_id" ]]; then
+            echo "Error: No pane found with name '$NAME'" >&2
+            exit 1
+        fi
+
+        if [[ ! -t 0 ]]; then
+            local stdin_content
+            stdin_content=$(cat)
+            if [[ -n "$stdin_content" ]]; then
+                send_bracketed_paste "$stdin_content" "$target_pane_id"
+                zellij action show-floating-panes
+            fi
+        fi
         return 0
     fi
 
@@ -334,12 +416,42 @@ handle_pane_mode() {
         # Create new pane with program
         case "$POS" in
         right | down)
-            zellij action new-pane --direction "$POS" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
+            if [[ -n "$NAME" ]]; then
+                zellij action new-pane --direction "$POS" --name "$NAME" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
+            else
+                zellij action new-pane --direction "$POS" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
+            fi
             ;;
         stacked)
-            zellij action new-pane --stacked --cwd "$(pwd)" --close-on-exit -- $PROGRAM
+            if [[ -n "$NAME" ]]; then
+                zellij action new-pane --stacked --name "$NAME" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
+            else
+                zellij action new-pane --stacked --cwd "$(pwd)" --close-on-exit -- $PROGRAM
+            fi
             ;;
         esac
+        return 0
+    fi
+
+    if [[ -n "$NAME" ]]; then
+        local target_pane_id
+        target_pane_id=$(find_pane_id_by_name "$NAME")
+
+        if [[ -z "$target_pane_id" ]]; then
+            echo "Error: No pane found with name '$NAME'" >&2
+            exit 1
+        fi
+
+        if [[ -t 0 ]]; then
+            return 0
+        fi
+
+        local stdin_content
+        stdin_content=$(cat)
+        if [[ -n "$stdin_content" ]]; then
+            send_bracketed_paste "$stdin_content" "$target_pane_id"
+        fi
+
         return 0
     fi
 
