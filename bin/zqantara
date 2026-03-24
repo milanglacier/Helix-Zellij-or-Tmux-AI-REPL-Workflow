@@ -327,6 +327,19 @@ send_bracketed_paste() {
     fi
 }
 
+create_pane() {
+    local pane_id
+
+    pane_id=$(zellij action new-pane "$@")
+    pane_id=${pane_id//[[:space:]]/}
+
+    if [[ -n "$NAME" && -n "$pane_id" ]]; then
+        # Some programs set their own pane title after launch, which can override
+        # the initial name from new-pane --name. rename-pane reapplies the desired name.
+        zellij action rename-pane -p "$pane_id" "$NAME"
+    fi
+}
+
 handle_tab_mode() {
     local existing_tabs
     existing_tabs=$(zellij action query-tab-names)
@@ -358,11 +371,7 @@ handle_tab_mode() {
 
 handle_floating_mode() {
     if [[ -n "$PROGRAM" ]]; then
-        if [[ -n "$NAME" ]]; then
-            zellij action new-pane --floating --name "$NAME" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
-        else
-            zellij action new-pane --floating --cwd "$(pwd)" --close-on-exit -- $PROGRAM
-        fi
+        create_pane --floating --cwd "$(pwd)" --close-on-exit -- $PROGRAM
         return 0
     fi
 
@@ -416,18 +425,10 @@ handle_pane_mode() {
         # Create new pane with program
         case "$POS" in
         right | down)
-            if [[ -n "$NAME" ]]; then
-                zellij action new-pane --direction "$POS" --name "$NAME" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
-            else
-                zellij action new-pane --direction "$POS" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
-            fi
+            create_pane --direction "$POS" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
             ;;
         stacked)
-            if [[ -n "$NAME" ]]; then
-                zellij action new-pane --stacked --name "$NAME" --cwd "$(pwd)" --close-on-exit -- $PROGRAM
-            else
-                zellij action new-pane --stacked --cwd "$(pwd)" --close-on-exit -- $PROGRAM
-            fi
+            create_pane --stacked --cwd "$(pwd)" --close-on-exit -- $PROGRAM
             ;;
         esac
         return 0
