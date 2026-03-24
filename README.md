@@ -11,8 +11,8 @@ dependencies:
   Gemini, Codestral and Claude providers
 - **`qantara`** - Smart REPL bridge router that detects Zellij or Tmux and forwards
   commands to `zqantara` or `tqantara` (use this in Helix configs)
-- **`zqantara`** - Zellij REPL backend with bracketed paste support for all Zellij
-  window types
+- **`zqantara`** - Zellij REPL backend with bracketed paste support for tabs,
+  floating panes, and panes by position or name
 - **`tqantara`** - Tmux REPL backend with bracketed paste support for windows,
   panes, and popups
 - **`symbol-search`** - Workspace-wide symbol (word) completion using command line tools
@@ -35,7 +35,8 @@ efficient, keyboard-driven workflows.
 ## Installation
 
 1. Clone this repository
-2. Copy the scripts from the `bin/` folder (`haico`, `qantara`, `zqantara`, `tqantara`, `symbol-search`, and `picker`) to your PATH
+2. Copy the scripts from the `bin/` folder (`haico`, `qantara`, `zqantara`,
+   `tqantara`, `symbol-search`, and `picker`) to your PATH
 3. Set up the required API keys for `haico`
 4. Configure Helix with the provided key bindings
 5. Ensure Zellij or Tmux is installed and running
@@ -164,22 +165,28 @@ between your Helix editor and REPL environments in Zellij, enabling seamless
 code execution and AI CLI tool integration. It is the Zellij backend used by
 `qantara`.
 
+> **Important**: Sending content to a named pane or named floating pane with
+> `--name` requires Zellij `0.44+`.
+
 ### Features
 
 - Bracketed paste mode support\*\*: **Essential feature** for REPL integration utility
 - Complete Zellij mode support: Works with all Zellij window types:
   - Tab mode: Routes content to named tabs, creating them if needed
-  - Floating window mode: Routes content to floating windows by position
-  - Pane mode: Routes content to panes in specified positions
+  - Floating window mode: Routes content to floating panes by position or name
+  - Pane mode: Routes content to panes by position or name
 - Zero dependencies: Uses only standard Unix tools (`grep`, `bash`)
 - Handle REPL creation: This script can also handle creating new
-  tabs/panes/windows with specified programs
+  tabs/panes/windows with specified programs, optionally naming new panes
 - CLI integration: Can also used for for Non REPL CLI tools like yazi, lazygit,
   Aider and Claude Code
 
 ### Dependencies
 
 - Zero external dependencies - uses only standard Unix tools
+- Zellij must be running for `zqantara`
+- Sending content directly to a named pane or named floating pane requires
+  Zellij `0.44+`
 
 ### Helix Integration (use `qantara`)
 
@@ -197,18 +204,22 @@ a = ":sh qantara --tab --name aider --program aider"
 
 # Open in floating windows
 [keys.normal.space.o.f]
-p = ":sh qantara --floating --program 'uv run ipython'"
+p = ":sh qantara --floating --name ipython-float --program 'uv run ipython'"
 t = ":sh qantara --floating --program $SHELL"
 c = ":sh qantara --floating --program aichat"
 
 # Open in panes (embedded windows)
 [keys.normal.space.o.w]
-p = ":sh qantara --pane --pos down --program ipython"
+# --name is optional
+p = ":sh qantara --pane --pos down --name ipython --program ipython"
 t = ":sh qantara --pane --pos right --program $SHELL"
-c = ":sh qantara --pane --pos stacked --program aichat"
+c = ":sh qantara --pane --pos stacked --name aichat --program aichat"
 ```
 
 #### Sending Content to REPLs and AI Tools
+
+Named pane and named floating-pane targets in the examples below require
+Zellij `0.44+`.
 
 ```toml
 [keys.normal.space.space]
@@ -219,15 +230,19 @@ c = ":pipe-to qantara --tab --name aichat"
 C = ":pipe-to qantara --final-return 0.1 --tab --name claude"
 t = ":pipe-to qantara --tab --name shell"
 
-# Send to floating windows by position
+# Send to floating windows by position or name
 # 'current' means use current floating window without switching position
 "1" = ":pipe-to qantara --floating --pos current"
 "2" = ":pipe-to qantara --floating --pos up"
 "3" = ":pipe-to qantara --floating --pos down"
+"f" = ":pipe-to qantara --floating --name ipython-float"
 
-# Send to panes by position
+# Send to panes by position or name
 "l" = ":pipe-to qantara --pane --pos 'down right'"
 "h" = ":pipe-to qantara --pane --pos 'down left'"
+"i" = ":pipe-to qantara --pane --name ipython"
+"s" = ":pipe-to qantara --pane --name shell"
+"A" = ":pipe-to qantara --pane --name aichat"
 
 [keys.select.space.space]
 # Send to named tabs
@@ -237,15 +252,19 @@ c = ":pipe-to qantara --tab --name aichat"
 C = ":pipe-to qantara --final-return 0.1 --tab --name claude"
 t = ":pipe-to qantara --tab --name shell"
 
-# Send to floating windows by position
+# Send to floating windows by position or name
 # 'current' means use current floating window without switching position
 "1" = ":pipe-to qantara --floating --pos current"
 "2" = ":pipe-to qantara --floating --pos up"
 "3" = ":pipe-to qantara --floating --pos down"
+"f" = ":pipe-to qantara --floating --name ipython-float"
 
-# Send to panes by position
+# Send to panes by position or name
 "l" = ":pipe-to qantara --pane --pos 'down right'"
 "h" = ":pipe-to qantara --pane --pos 'down left'"
+"i" = ":pipe-to qantara --pane --name ipython"
+"s" = ":pipe-to qantara --pane --name shell"
+"A" = ":pipe-to qantara --pane --name aichat"
 ```
 
 ### Recommended Zellij Configuration
@@ -262,14 +281,6 @@ Without this configuration, certain Helix keybindings that require `Alt+Shift`
 combinations will not work properly. This includes keys like `Alt+C` (typed as
 `Alt+Shift+c`) and `Alt+*` (typed as `Alt+Shift+8`). For technical details
 about this issue, see Zellij Issue #4148.
-
-### Current Limitations
-
-Due to Zellij's API limitations, the script cannot retrieve pane names or floating window names:
-
-- Content can only be sent to floating windows by **position** (not by name)
-- Content can only be sent to panes by **position** (not by name)
-- Cannot accurately target a specific pane/floating window by its desired name
 
 ### Why we need Bracketed Paste Mode?
 
