@@ -60,13 +60,15 @@ Options:
                                     Set to 0 to disable the waiting period.
     --provider <provider>           AI provider to use: openai, claude, gemini, openai-fim, or codestral. Defaults to gemini.
     --model <model>                 AI model to use. Defaults vary by provider:
-                                    gemini: gemini-2.0-flash
-                                    openai: gpt-4.1-nano
-                                    claude: claude-3-5-haiku-20241022
+                                    gemini: gemini-3.1-flash-lite-preview
+                                    openai: gpt-5.4-nano
+                                    claude: claude-haiku-4.5
                                     openai-fim: gpt-3.5-turbo-instruct
                                     codestral: codestral-latest
     --max-tokens <tokens>           Maximum output tokens. Defaults to 256.
-    --thinking-tokens <tokens>      Thinking tokens for reasoning. Defaults to 0. Generally recommended to keep at 0.
+    --thinking-level <level>        Thinking level for reasoning. Defaults to FALSE.
+                                    Supported values: none, minimal, low, medium, high, FALSE.
+                                    Use FALSE to omit the thinking level from the JSON payload.
     --stop <sequences>              Stop sequences as JSON array (e.g., '["\n", "END"]'). Defaults to none.
                                     Note: Be careful with shell escaping rules.
     --help                          Show this help message and exit.
@@ -131,7 +133,7 @@ wait_seconds="0.1"
 provider="gemini"
 model=""
 max_tokens="256"
-thinking_tokens="0"
+thinking_level="FALSE"
 stop_sequences=""
 
 while [[ $# -gt 0 ]]; do
@@ -180,8 +182,8 @@ while [[ $# -gt 0 ]]; do
         max_tokens="$2"
         shift 2
         ;;
-    --thinking-tokens)
-        thinking_tokens="$2"
+    --thinking-level)
+        thinking_level="$2"
         shift 2
         ;;
     --stop)
@@ -203,13 +205,13 @@ done
 if [[ -z "$model" ]]; then
     case "$provider" in
     "gemini")
-        model="gemini-2.0-flash"
+        model="gemini-3.1-flash-lite-preview"
         ;;
     "openai")
-        model="gpt-4.1-nano"
+        model="gpt-5.4-nano"
         ;;
     "claude")
-        model="claude-3-5-haiku-20241022"
+        model="claude-haiku-4.5"
         ;;
     "openai-fim")
         model="gpt-3.5-turbo-instruct"
@@ -218,6 +220,11 @@ if [[ -z "$model" ]]; then
         model="codestral-latest"
         ;;
     esac
+fi
+
+if [[ ! "$thinking_level" =~ ^(minimal|low|medium|high|none|FALSE)$ ]]; then
+    echo "Error: --thinking-level must be one of: none, minimal, low, medium, high, FALSE." >&2
+    exit 1
 fi
 
 if [[ "$prepare_mode" == true && -z "$input_file" ]]; then
@@ -341,7 +348,7 @@ gemini_request() {
         --arg system_prompt "$system_prompt" \
         --arg user_content "$formatted_content" \
         --argjson max_tokens "$max_tokens" \
-        --argjson thinking_tokens "$thinking_tokens" \
+        --arg thinking_level "$thinking_level" \
         --arg stop_sequences "$stop_sequences" \
         '{
             "contents": [
@@ -362,17 +369,22 @@ gemini_request() {
             },
             "generationConfig": (
                 {
-                    "maxOutputTokens": $max_tokens,
-                    "thinkingConfig": {
-                        "thinkingBudget": $thinking_tokens
+                    "maxOutputTokens": $max_tokens
+                }
+                + (if $thinking_level != "FALSE" then
+                    {
+                        "thinkingConfig": {
+                            "thinkingLevel": $thinking_level
+                        }
                     }
-                } + (
-                    if $stop_sequences != "" then
-                        {"stopSequences": ($stop_sequences | fromjson)}
-                    else
-                        {}
-                    end
-                )
+                else
+                    {}
+                end)
+                + (if $stop_sequences != "" then
+                    {"stopSequences": ($stop_sequences | fromjson)}
+                else
+                    {}
+                end)
             )
         }')
 
@@ -418,6 +430,7 @@ openai_request() {
         --arg user_content "$formatted_content" \
         --arg model "$model" \
         --argjson max_tokens "$max_tokens" \
+        --arg thinking_level "$thinking_level" \
         --arg stop_sequences "$stop_sequences" \
         '{
             "model": $model,
@@ -431,8 +444,14 @@ openai_request() {
                     "content": $user_content
                 }
             ],
-            "max_tokens": $max_tokens
+            "max_completion_tokens": $max_tokens
         } + (
+            if $thinking_level != "FALSE" then
+                {"reasoning_effort": $thinking_level}
+            else
+                {}
+            end
+        ) + (
             if $stop_sequences != "" then
                 {"stop": ($stop_sequences | fromjson)}
             else
