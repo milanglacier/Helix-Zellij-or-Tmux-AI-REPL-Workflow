@@ -193,7 +193,7 @@ code execution and AI CLI tool integration. It is the Zellij backend used by
 
 ### Features
 
-- Bracketed paste mode support\*\*: **Essential feature** for REPL integration utility
+- Bracketed paste mode support: **Essential feature** for REPL integration utility
 - Complete Zellij mode support: Works with all Zellij window types:
   - Tab mode: Routes content to named tabs, creating them if needed
   - Floating window mode: Routes content to floating panes by position or name
