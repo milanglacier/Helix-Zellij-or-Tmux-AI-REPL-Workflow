@@ -97,7 +97,30 @@ export OPENAI_BASE_URL="https://openrouter.ai/api/v1"  # optional, for custom en
 
 # For Claude
 export ANTHROPIC_API_KEY="your-api-key"
+
+# For Codestral
+export CODESTRAL_API_KEY="your-api-key"
 ```
+
+If you do not pass `--model`, `haico` defaults to:
+
+- `gemini`: `gemini-3.1-flash-lite-preview`
+- `openai`: `gpt-5.4-nano`
+- `claude`: `claude-haiku-4.5`
+- `openai-fim`: `gpt-3.5-turbo-instruct`
+- `codestral`: `codestral-latest`
+
+Use `--thinking-level` when you want the provider to spend more or less effort on
+reasoning:
+
+```bash
+haico --thinking-level low ...
+haico --thinking-level high ...
+haico --thinking-level FALSE ...   # omit reasoning config entirely
+```
+
+`--thinking-level` is currently forwarded to Gemini as `thinkingConfig.thinkingLevel`
+and to OpenAI-compatible chat completions as `reasoning_effort`.
 
 ### Helix Integration
 
