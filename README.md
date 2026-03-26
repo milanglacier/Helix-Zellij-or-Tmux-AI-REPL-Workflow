@@ -193,8 +193,10 @@ between your Helix editor and REPL environments in Zellij, enabling seamless
 code execution and AI CLI tool integration. It is the Zellij backend used by
 `qantara`.
 
-> **Important**: Sending content to a named pane or named floating pane with
-> `--name` requires Zellij `0.44+`.
+
+> [!IMPORTANT]
+> Sending content to a named pane or named floating pane with `--name` requires
+> Zellij `0.44+`.
 
 ### Features
 
