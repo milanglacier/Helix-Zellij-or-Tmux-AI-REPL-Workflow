@@ -25,28 +25,14 @@ using bracketed paste mode.
 Requirements:
     - Tmux must be running with the session active
     - Target REPL programs should support bracketed paste mode
-    - Tmux 3.2+ is required for popup (floating) mode
 
-The script supports three main modes:
+The script supports two main modes:
 1. Tab mode: Routes content to named windows, creating them if they don't exist
-2. Floating mode: Routes content to popups (when creating) or current pane
-3. Pane mode: Routes content to panes in specified positions, creating them if needed
+2. Pane mode: Routes content to panes in specified positions, creating them if needed
 
 Usage:
     # Send to existing window or create new one:
     echo 'print(42)' | ./tqantara --tab --name python --program 'ipython --simple-prompt'
-
-    # Send to current pane:
-    echo 'ls -la' | ./tqantara --floating --pos current
-
-    # Send to pane below current:
-    echo 'ls -la' | ./tqantara --floating --pos down
-
-    # Create new popup:
-    ./tqantara --floating --program 'python3'
-
-    # Create new popup with a title:
-    ./tqantara --floating --name python --program 'python3'
 
     # Send to pane in the upper left position:
     echo 'print(42)' | ./tqantara --pane --pos "up left"
@@ -62,21 +48,16 @@ Usage:
 
 Options:
     --tab                       Use tab mode (tmux windows).
-    --floating                  Use floating mode (tmux popup or current pane).
+    --floating                  Unsupported in tmux. Prints a warning and exits.
     --pane                      Use pane mode.
     --name <name>               For --tab mode: required window name.
                                 For --pane with --program: optional name for the new pane.
-                                For --floating with --program: optional popup title.
-                                For --pane/--floating without --program: target pane name
+                                For --pane without --program: target pane name
                                 (mutually exclusive with --pos).
     --pos <position>            Position specification:
                                 For --pane mode:
                                 - With --program: 'right', 'down', or 'stacked'
                                 - Without --program: space-separated directions like 'up left' or 'down right right'
-                                  (mutually exclusive with --name)
-                                For --floating mode (without --program):
-                                - 'current': use current pane
-                                - 'up'/'down': switch focus up/down, supports repetition like 'down down'
                                   (mutually exclusive with --name)
     --program <command>         Program to launch (e.g., 'ipython --simple-prompt').
     --final-return <val>        Control the final return behavior after sending bracketed paste:
@@ -161,53 +142,24 @@ validate_args() {
         exit 1
     fi
 
+    if [[ "$USE_FLOATING" == true ]]; then
+        cat >&2 <<'EOF'
+--floating is no longer supported in tqantara(tmux).
+
+Tmux popup windows keep keyboard input captured inside the popup, which means you
+cannot move focus back to the embedded pane or switch to another tab while it is
+open. In practice that makes the floating workflow awkward enough that this mode
+is better left disabled.
+
+Please use --pane or --tab instead.
+EOF
+        exit 1
+    fi
+
     # Validate tab mode requirements
     if [[ "$USE_TAB" == true && -z "$NAME" ]]; then
         echo "Error: --name is required when using --tab" >&2
         exit 1
-    fi
-
-    # Validate floating mode requirements
-    if [[ "$USE_FLOATING" == true ]]; then
-        if [[ -z "$PROGRAM" && -z "$POS" && -z "$NAME" ]]; then
-            echo "Error: For floating windows, either --program, --pos, or --name is required" >&2
-            exit 1
-        fi
-
-        # When creating new popup with --program, --pos must not be specified
-        if [[ -n "$PROGRAM" && -n "$POS" ]]; then
-            echo "Error: When creating new popup with --program, --pos must not be specified" >&2
-            exit 1
-        fi
-
-        if [[ -z "$PROGRAM" && -n "$POS" && -n "$NAME" ]]; then
-            echo "Error: When targeting an existing pane, --name and --pos are mutually exclusive" >&2
-            exit 1
-        fi
-
-        # When using --pos without --program, validate position values for floating mode
-        if [[ -z "$PROGRAM" && -n "$POS" ]]; then
-            # Check that POS only contains valid directions for floating mode
-            local invalid_word=""
-            for word in $POS; do
-                case "$word" in
-                up | down | current) ;; # Valid directions for floating mode
-                left | right)
-                    echo "Error: --pos does not support 'left' and 'right' directions in --floating mode" >&2
-                    exit 1
-                    ;;
-                *)
-                    invalid_word="$word"
-                    break
-                    ;;
-                esac
-            done
-
-            if [[ -n "$invalid_word" ]]; then
-                echo "Error: Invalid direction '$invalid_word' in --pos '$POS' for floating mode. Valid directions: up, down, current" >&2
-                exit 1
-            fi
-        fi
     fi
 
     # Validate pane mode requirements
@@ -258,9 +210,9 @@ validate_args() {
         fi
     fi
 
-    # Validate that --pos is only used with --pane or --floating
+    # Validate that --pos is only used with --pane
     if [[ "$USE_TAB" == true && -n "$POS" ]]; then
-        echo "Error: --pos can only be used with --pane or --floating" >&2
+        echo "Error: --pos can only be used with --pane" >&2
         exit 1
     fi
 
@@ -350,61 +302,6 @@ handle_tab_mode() {
     fi
 }
 
-handle_floating_mode() {
-    if [[ -n "$PROGRAM" ]]; then
-        if [[ -n "$NAME" ]]; then
-            tmux display-popup -E -d "$(pwd)" -T "$NAME" "$PROGRAM"
-        else
-            tmux display-popup -E -d "$(pwd)" "$PROGRAM"
-        fi
-        return 0
-    fi
-
-    if [[ -n "$NAME" ]]; then
-        local target_pane_id
-        target_pane_id=$(find_pane_id_by_name "$NAME")
-
-        if [[ -z "$target_pane_id" ]]; then
-            echo "Error: No pane found with name '$NAME'" >&2
-            exit 1
-        fi
-
-        if [[ ! -t 0 ]]; then
-            local stdin_content
-            stdin_content=$(cat)
-            if [[ -n "$stdin_content" ]]; then
-                send_bracketed_paste "$stdin_content" "$target_pane_id"
-            fi
-        fi
-        return 0
-    fi
-
-    if [[ -n "$POS" ]]; then
-        # Handle focus switching based on --pos directions
-        for direction in $POS; do
-            case "$direction" in
-            current)
-                # Do nothing - stay at current position
-                ;;
-            up)
-                tmux select-pane -U
-                ;;
-            down)
-                tmux select-pane -D
-                ;;
-            esac
-        done
-
-        if [[ ! -t 0 ]]; then
-            local stdin_content
-            stdin_content=$(cat)
-            if [[ -n "$stdin_content" ]]; then
-                send_bracketed_paste "$stdin_content"
-            fi
-        fi
-    fi
-}
-
 handle_pane_mode() {
     if [[ -n "$PROGRAM" ]]; then
         # Create new pane with program
@@ -483,8 +380,6 @@ fi
 
 if [[ "$USE_TAB" == true ]]; then
     handle_tab_mode
-elif [[ "$USE_FLOATING" == true ]]; then
-    handle_floating_mode
 elif [[ "$USE_PANE" == true ]]; then
     handle_pane_mode
 fi
