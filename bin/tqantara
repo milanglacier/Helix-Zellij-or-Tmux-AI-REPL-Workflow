@@ -17,7 +17,7 @@ Named after the Arabic "qantara" meaning bridge - like how bridges connect dista
 this script bridges the gap between your Helix editor and REPL environments in Tmux.
 
 This script provides REPL interaction between Helix editor and Tmux by routing
-selected content to windows, popups, or panes.
+selected content to windows and panes.
 
 It accepts content from stdin and sends it to designated Tmux windows or panes
 using bracketed paste mode.
@@ -45,11 +45,17 @@ Usage:
     # Create new popup:
     ./tqantara --floating --program 'python3'
 
+    # Create new popup with a title:
+    ./tqantara --floating --name python --program 'python3'
+
     # Send to pane in the upper left position:
     echo 'print(42)' | ./tqantara --pane --pos "up left"
 
+    # Send to an existing named pane:
+    echo 'print(42)' | ./tqantara --pane --name python
+
     # Create new pane with program (right direction):
-    ./tqantara --pane --pos right --program 'python3'
+    ./tqantara --pane --pos right --name python --program 'python3'
 
     # Create new pane (stacked uses a vertical split in tmux):
     ./tqantara --pane --pos stacked --program 'python3'
@@ -58,14 +64,20 @@ Options:
     --tab                       Use tab mode (tmux windows).
     --floating                  Use floating mode (tmux popup or current pane).
     --pane                      Use pane mode.
-    --name <name>               Window name (required for --tab mode).
+    --name <name>               For --tab mode: required window name.
+                                For --pane with --program: optional name for the new pane.
+                                For --floating with --program: optional popup title.
+                                For --pane/--floating without --program: target pane name
+                                (mutually exclusive with --pos).
     --pos <position>            Position specification:
                                 For --pane mode:
                                 - With --program: 'right', 'down', or 'stacked'
                                 - Without --program: space-separated directions like 'up left' or 'down right right'
+                                  (mutually exclusive with --name)
                                 For --floating mode (without --program):
                                 - 'current': use current pane
                                 - 'up'/'down': switch focus up/down, supports repetition like 'down down'
+                                  (mutually exclusive with --name)
     --program <command>         Program to launch (e.g., 'ipython --simple-prompt').
     --final-return <val>        Control the final return behavior after sending bracketed paste:
                                 - true (default): send final return immediately
@@ -129,9 +141,11 @@ validate_args() {
 
     if [[ "$USE_TAB" == true ]]; then
         mode_count=$((mode_count + 1))
-    elif [[ "$USE_FLOATING" == true ]]; then
+    fi
+    if [[ "$USE_FLOATING" == true ]]; then
         mode_count=$((mode_count + 1))
-    elif [[ "$USE_PANE" == true ]]; then
+    fi
+    if [[ "$USE_PANE" == true ]]; then
         mode_count=$((mode_count + 1))
     fi
 
@@ -153,22 +167,21 @@ validate_args() {
         exit 1
     fi
 
-    # Validate that --name is only used with --tab
-    if [[ ("$USE_FLOATING" == true || "$USE_PANE" == true) && -n "$NAME" ]]; then
-        echo "Error: --name can only be used with --tab" >&2
-        exit 1
-    fi
-
     # Validate floating mode requirements
     if [[ "$USE_FLOATING" == true ]]; then
-        if [[ -z "$PROGRAM" && -z "$POS" ]]; then
-            echo "Error: For floating windows, either --program or --pos is required" >&2
+        if [[ -z "$PROGRAM" && -z "$POS" && -z "$NAME" ]]; then
+            echo "Error: For floating windows, either --program, --pos, or --name is required" >&2
             exit 1
         fi
 
         # When creating new popup with --program, --pos must not be specified
         if [[ -n "$PROGRAM" && -n "$POS" ]]; then
             echo "Error: When creating new popup with --program, --pos must not be specified" >&2
+            exit 1
+        fi
+
+        if [[ -z "$PROGRAM" && -n "$POS" && -n "$NAME" ]]; then
+            echo "Error: When targeting an existing pane, --name and --pos are mutually exclusive" >&2
             exit 1
         fi
 
@@ -199,13 +212,13 @@ validate_args() {
 
     # Validate pane mode requirements
     if [[ "$USE_PANE" == true ]]; then
-        if [[ -z "$POS" ]]; then
-            echo "Error: --pos is required when using --pane" >&2
-            exit 1
-        fi
-
         # When creating new pane with --program, validate position values
         if [[ -n "$PROGRAM" ]]; then
+            if [[ -z "$POS" ]]; then
+                echo "Error: --pos is required when creating a new pane with --program" >&2
+                exit 1
+            fi
+
             case "$POS" in
             right | down | stacked) ;; # Valid for new pane creation
             *)
@@ -214,21 +227,33 @@ validate_args() {
                 ;;
             esac
         else
-            # When switching focus to existing pane, validate that POS contains only valid direction words
-            local invalid_word=""
-            for word in $POS; do
-                case "$word" in
-                left | right | up | down) ;; # Valid direction words
-                *)
-                    invalid_word="$word"
-                    break
-                    ;;
-                esac
-            done
-
-            if [[ -n "$invalid_word" ]]; then
-                echo "Error: Invalid direction '$invalid_word' in --pos '$POS'. Valid directions: left, right, up, down" >&2
+            if [[ -z "$POS" && -z "$NAME" ]]; then
+                echo "Error: When using --pane without --program, either --pos or --name is required" >&2
                 exit 1
+            fi
+
+            if [[ -n "$POS" && -n "$NAME" ]]; then
+                echo "Error: When targeting an existing pane, --name and --pos are mutually exclusive" >&2
+                exit 1
+            fi
+
+            # When switching focus to existing pane, validate that POS contains only valid direction words
+            if [[ -n "$POS" ]]; then
+                local invalid_word=""
+                for word in $POS; do
+                    case "$word" in
+                    left | right | up | down) ;; # Valid direction words
+                    *)
+                        invalid_word="$word"
+                        break
+                        ;;
+                    esac
+                done
+
+                if [[ -n "$invalid_word" ]]; then
+                    echo "Error: Invalid direction '$invalid_word' in --pos '$POS'. Valid directions: left, right, up, down" >&2
+                    exit 1
+                fi
             fi
         fi
     fi
@@ -249,12 +274,29 @@ validate_args() {
     fi
 }
 
+find_pane_id_by_name() {
+    local pane_name="$1"
+
+    tmux list-panes -a -F '#{pane_id}羣#{pane_title}' | awk -F '羣' -v target="$pane_name" '
+        $2 == target {
+            print $1
+            exit
+        }
+    '
+}
+
 send_bracketed_paste() {
     local content="$1"
+    local target_pane="${2:-}"
+    local tmux_target_args=()
 
-    tmux send-keys -l $'\e[200~'
-    tmux send-keys -l -- "$content"
-    tmux send-keys -l $'\r\e[201~'
+    if [[ -n "$target_pane" ]]; then
+        tmux_target_args=(-t "$target_pane")
+    fi
+
+    tmux send-keys "${tmux_target_args[@]}" -l $'\e[200~'
+    tmux send-keys "${tmux_target_args[@]}" -l -- "$content"
+    tmux send-keys "${tmux_target_args[@]}" -l $'\r\e[201~'
 
     # Handle final return based on FINAL_RETURN
     if [[ "$FINAL_RETURN" == "false" ]]; then
@@ -262,11 +304,23 @@ send_bracketed_paste() {
         :
     elif [[ "$FINAL_RETURN" == "true" ]]; then
         # Send final return immediately
-        tmux send-keys C-m
+        tmux send-keys "${tmux_target_args[@]}" C-m
     else
         # Send final return with delay
         sleep "$FINAL_RETURN"
-        tmux send-keys C-m
+        tmux send-keys "${tmux_target_args[@]}" C-m
+    fi
+}
+
+create_pane() {
+    local pane_id
+
+    pane_id=$(tmux split-window -P -F '#{pane_id}' "$@")
+
+    if [[ -n "$NAME" && -n "$pane_id" ]]; then
+        # Programs can change pane_title after startup, so reapply the requested
+        # name to the new pane once tmux has created it.
+        tmux select-pane -t "$pane_id" -T "$NAME"
     fi
 }
 
@@ -274,7 +328,7 @@ handle_tab_mode() {
     local existing_windows
     existing_windows=$(tmux list-windows -F '#W')
 
-    if echo "$existing_windows" | grep -Fxq "$NAME"; then
+    if echo "$existing_windows" | grep -Fxq -- "$NAME"; then
         tmux select-window -t "$NAME"
 
         if [[ -t 0 ]]; then
@@ -298,7 +352,30 @@ handle_tab_mode() {
 
 handle_floating_mode() {
     if [[ -n "$PROGRAM" ]]; then
-        tmux display-popup -E -d "$(pwd)" "$PROGRAM"
+        if [[ -n "$NAME" ]]; then
+            tmux display-popup -E -d "$(pwd)" -T "$NAME" "$PROGRAM"
+        else
+            tmux display-popup -E -d "$(pwd)" "$PROGRAM"
+        fi
+        return 0
+    fi
+
+    if [[ -n "$NAME" ]]; then
+        local target_pane_id
+        target_pane_id=$(find_pane_id_by_name "$NAME")
+
+        if [[ -z "$target_pane_id" ]]; then
+            echo "Error: No pane found with name '$NAME'" >&2
+            exit 1
+        fi
+
+        if [[ ! -t 0 ]]; then
+            local stdin_content
+            stdin_content=$(cat)
+            if [[ -n "$stdin_content" ]]; then
+                send_bracketed_paste "$stdin_content" "$target_pane_id"
+            fi
+        fi
         return 0
     fi
 
@@ -333,15 +410,37 @@ handle_pane_mode() {
         # Create new pane with program
         case "$POS" in
         right)
-            tmux split-window -h -c "$(pwd)" "$PROGRAM"
+            create_pane -h -c "$(pwd)" "$PROGRAM"
             ;;
         down)
-            tmux split-window -v -c "$(pwd)" "$PROGRAM"
+            create_pane -v -c "$(pwd)" "$PROGRAM"
             ;;
         stacked)
-            tmux split-window -v -c "$(pwd)" "$PROGRAM"
+            create_pane -v -c "$(pwd)" "$PROGRAM"
             ;;
         esac
+        return 0
+    fi
+
+    if [[ -n "$NAME" ]]; then
+        local target_pane_id
+        target_pane_id=$(find_pane_id_by_name "$NAME")
+
+        if [[ -z "$target_pane_id" ]]; then
+            echo "Error: No pane found with name '$NAME'" >&2
+            exit 1
+        fi
+
+        if [[ -t 0 ]]; then
+            return 0
+        fi
+
+        local stdin_content
+        stdin_content=$(cat)
+        if [[ -n "$stdin_content" ]]; then
+            send_bracketed_paste "$stdin_content" "$target_pane_id"
+        fi
+
         return 0
     fi
 
