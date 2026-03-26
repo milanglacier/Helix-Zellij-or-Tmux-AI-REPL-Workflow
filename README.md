@@ -13,8 +13,8 @@ dependencies:
   commands to `zqantara` or `tqantara` (use this in Helix configs)
 - **`zqantara`** - Zellij REPL backend with bracketed paste support for tabs,
   floating panes, and panes by position or name
-- **`tqantara`** - Tmux REPL backend with bracketed paste support for windows,
-  panes, and popups
+- **`tqantara`** - Tmux REPL backend with bracketed paste support for windows
+  and panes
 - **`symbol-search`** - Workspace-wide symbol (word) completion using command line tools
 
 This workflow enables seamless integration between:
@@ -23,7 +23,7 @@ This workflow enables seamless integration between:
 - REPL interaction for Python, R, Shell, and other languages
 - AI CLI applications like Aider and Claude Code
 - Multiplexing: Manage multiple REPLs and processes efficiently using Zellij's
-  tabs/panes/floating windows or Tmux windows/panes/popups.
+  tabs/panes/floating windows or Tmux windows/panes.
 
 All scripts are designed with minimal dependencies and focus on providing
 efficient, keyboard-driven workflows.
@@ -181,6 +181,11 @@ This means you can keep one set of Helix key bindings that work in both Zellij
 and Tmux. Use `qantara` in your Helix config unless you want to target a
 specific backend directly.
 
+> [!NOTE]
+> `--floating` is now Zellij-only. `qantara --floating ...` still works when
+> routed to `zqantara`, but it will fail deliberately when routed to
+> `tqantara`. For tmux, use `--pane` or `--tab`.
+
 ## zqantara - Zellij REPL Bridge
 
 Named after the Arabic "qantara" meaning bridge, `zqantara` bridges the gap
@@ -322,14 +327,21 @@ applications support this feature, which offers several advantages:
 ## tqantara - Tmux REPL Bridge
 
 `tqantara` is the Tmux backend used by `qantara`. It supports the same CLI
-options as `zqantara`, but routes content to Tmux windows, panes, and popups
-(Tmux 3.2+ required for popups). If you want a single Helix config that works in
-both multiplexers, use `qantara`.
+options as `zqantara` except for floating mode, and routes content to Tmux
+windows and panes. If you want a single Helix config that works in both
+multiplexers, use `qantara`.
+
+> [!IMPORTANT]
+> Breaking change: `tqantara --floating` is no longer supported.
+> Tmux popup windows keep keyboard input captured inside the popup, which means
+> you cannot move focus back to the embedded pane or switch to another tab
+> while it is open. In practice that makes the floating workflow awkward enough
+> that this mode is better left disabled.
 
 ### Features
 
 - Bracketed paste mode support for reliable REPL interaction
-- Window, pane, and popup targeting (with automatic creation when requested)
+- Window and pane targeting (with automatic creation when requested)
 - Zero external dependencies beyond standard Unix tools
 
 ## symbol-search - Workspace Symbol (Word) Completion
@@ -407,5 +419,5 @@ This setup provides a comprehensive development environment:
 1. Code in Helix with AI-powered completions via `haico`
 2. Execute code in REPLs via `qantara` with proper bracketed paste
 3. Access AI tools like Aider and Claude Code through organized multiplexer sessions
-4. Manage multiple CLI Apps with Zellij tabs/panes/floating windows or Tmux windows/panes/popups
+4. Manage multiple CLI apps with Zellij tabs/panes/floating windows or Tmux windows/panes
 5. Maintain context across all tools with minimal context switching
