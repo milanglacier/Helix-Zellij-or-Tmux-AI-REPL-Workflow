@@ -295,6 +295,15 @@ t = ":pipe-to qantara --tab --name shell"
 "A" = ":pipe-to qantara --pane --name aichat"
 ```
 
+`--final-return` controls the extra `Return` sent after bracketed paste
+finishes. You generally do not need to pass it, because most REPLs work well
+with the default behavior. Only change it if a specific tool needs different
+timing. For example, Claude Code may ignore an immediate trailing `Return` if
+it arrives too quickly after the pasted text, so `--final-return 0.1` adds a
+short delay before submitting. Other REPLs such as `radian` may behave better
+with `--final-return false` to avoid an unwanted extra prompt or duplicate
+submit.
+
 ### Recommended Zellij Configuration
 
 If you're using a terminal emulator that supports the Kitty keyboard protocol
