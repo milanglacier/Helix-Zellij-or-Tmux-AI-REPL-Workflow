@@ -13,8 +13,8 @@ dependencies:
   commands to `zqantara` or `tqantara` (use this in Helix configs)
 - **`zqantara`** - Zellij REPL backend with bracketed paste support for tabs,
   floating panes, and panes by position or name
-- **`tqantara`** - Tmux REPL backend with bracketed paste support for windows
-  and panes
+- **`tqantara`** - Tmux REPL backend with bracketed paste support for windows,
+  floating panes (Tmux `3.8+`), and panes by position or name
 - **`symbol-search`** - Workspace-wide symbol (word) completion using command line tools
 
 This workflow enables seamless integration between:
@@ -23,7 +23,7 @@ This workflow enables seamless integration between:
 - REPL interaction for Python, R, Shell, and other languages
 - AI CLI applications like Aider and Claude Code
 - Multiplexing: Manage multiple REPLs and processes efficiently using Zellij's
-  tabs/panes/floating windows or Tmux windows/panes.
+  tabs/panes/floating windows or Tmux windows/panes/floating panes.
 
 All scripts are designed with minimal dependencies and focus on providing
 efficient, keyboard-driven workflows.
@@ -39,7 +39,8 @@ efficient, keyboard-driven workflows.
    `tqantara`, `symbol-search`, and `picker`) to your PATH
 3. Set up the required API keys for `haico`
 4. Configure Helix with the provided key bindings
-5. Ensure Zellij or Tmux is installed and running
+5. Ensure Zellij or Tmux is installed and running (Tmux `3.8+` is required for
+   `--floating`)
 
 ## Video Showcase
 
@@ -182,9 +183,9 @@ and Tmux. Use `qantara` in your Helix config unless you want to target a
 specific backend directly.
 
 > [!NOTE]
-> `--floating` is now Zellij-only. `qantara --floating ...` still works when
-> routed to `zqantara`, but it will fail deliberately when routed to
-> `tqantara`. For tmux, use `--pane` or `--tab`.
+> `--floating` works with both backends. Tmux floating panes require Tmux
+> `3.8+`, and targeting a named pane with `--name` in Zellij requires Zellij
+> `0.44+`.
 
 ## zqantara - Zellij REPL Bridge
 
@@ -338,22 +339,51 @@ applications support this feature, which offers several advantages:
 ## tqantara - Tmux REPL Bridge
 
 `tqantara` is the Tmux backend used by `qantara`. It supports the same CLI
-options as `zqantara` except for floating mode, and routes content to Tmux
-windows and panes. If you want a single Helix config that works in both
-multiplexers, use `qantara`.
+options as `zqantara` and routes content to Tmux windows, floating panes, and
+panes. If you want a single Helix config that works in both multiplexers, use
+`qantara`.
 
 > [!IMPORTANT]
-> Breaking change: `tqantara --floating` is no longer supported.
-> Tmux popup windows keep keyboard input captured inside the popup, which means
-> you cannot move focus back to the embedded pane or switch to another tab
-> while it is open. In practice that makes the floating workflow awkward enough
-> that this mode is better left disabled.
+> `tqantara --floating` requires Tmux `3.8+`, which introduced native floating
+> panes. Earlier versions do not provide the `pane_floating_flag`, `pane_z`, or
+> `new-pane -x/-y` features that floating mode relies on.
 
 ### Features
 
 - Bracketed paste mode support for reliable REPL interaction
-- Window and pane targeting (with automatic creation when requested)
+- Window, floating pane, and pane targeting (with automatic creation when
+  requested)
+- Floating mode follows the on-screen layout: `--pos up`/`--pos down` moves
+  between floating panes by vertical position, and `--pos current` stays on the
+  focused floating pane (or the front-most one when a tiled pane has focus)
+- Named floating panes are raised to the front after content is sent, so their
+  output stays visible without moving focus away from the editor
 - Zero external dependencies beyond standard Unix tools
+
+### Floating Mode Behavior
+
+- `--floating --program <cmd>` creates a floating pane sized to 50% of the
+  window width and height in the current working directory. Add `--name` to
+  give the new pane a stable name for later targeting.
+- `--floating --pos ...` targets existing floating panes and only sends stdin;
+  it never creates a pane and reports an error when the current window has no
+  floating panes.
+- `--floating --name <name>` sends to a named pane, floating or tiled. The pane
+  is raised to the front only when it is floating.
+
+```toml
+# Open floating panes
+[keys.normal.space.o.f]
+p = ":sh qantara --floating --name ipython-float --program 'uv run ipython'"
+t = ":sh qantara --floating --program $SHELL"
+
+# Send to floating panes by position or name
+[keys.normal.space.space]
+"1" = ":pipe-to qantara --floating --pos current"
+"2" = ":pipe-to qantara --floating --pos up"
+"3" = ":pipe-to qantara --floating --pos down"
+"f" = ":pipe-to qantara --floating --name ipython-float"
+```
 
 ## symbol-search - Workspace Symbol (Word) Completion
 
@@ -430,5 +460,6 @@ This setup provides a comprehensive development environment:
 1. Code in Helix with AI-powered completions via `haico`
 2. Execute code in REPLs via `qantara` with proper bracketed paste
 3. Access AI tools like Aider and Claude Code through organized multiplexer sessions
-4. Manage multiple CLI apps with Zellij tabs/panes/floating windows or Tmux windows/panes
+4. Manage multiple CLI apps with Zellij tabs/panes/floating windows or Tmux
+   windows/panes/floating panes
 5. Maintain context across all tools with minimal context switching
